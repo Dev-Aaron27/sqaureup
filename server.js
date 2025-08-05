@@ -24,12 +24,27 @@ app.get("/orders", async (req, res) => {
         query: {
           filter: {
             state_filter: {
-              states: ["OPEN"]
+              states: ["OPEN", "COMPLETED"] // track open & completed orders
             }
           }
         }
       })
     });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      return res.status(response.status).send(`Square API error: ${errorData}`);
+    }
+
+    const data = await response.json();
+    const orderCount = data.orders ? data.orders.length : 0;
+
+    res.json({ count: orderCount });
+  } catch (error) {
+    console.error("Error fetching Square orders:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
     if (!response.ok) {
       const errorData = await response.text();
