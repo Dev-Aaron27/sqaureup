@@ -13,7 +13,12 @@ const YOUTUBE_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID; // Your channel ID
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME; // Default username
 
-app.use(cors());
+const corsOptions = {
+  origin: "https://bb-counter.infy.uk", // your frontend origin here
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 
 // -----------------------
 // Orders count
