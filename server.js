@@ -1,26 +1,24 @@
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch"); // npm install node-fetch@2
+require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ==================
-// Environment Secrets
-// ==================
-const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN; // Render secret
-const LOCATION_ID = process.env.LOCATION_ID;                 // Render secret
-const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;          // Google API key
-const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;          // Apify token (TikTok)
+// Env variables
+const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN;
+const LOCATION_ID = process.env.LOCATION_ID;
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+const YOUTUBE_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID; // Your channel ID
+const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
+const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME; // Default username
 
-// Enable CORS for all origins
 app.use(cors());
 
-// ======================
-// Square Orders Endpoints
-// ======================
-
-// 1. Current orders (OPEN + COMPLETED)
+// -----------------------
+// Orders count
+// -----------------------
 app.get("/orders", async (req, res) => {
   try {
     const response = await fetch("https://connect.squareup.com/v2/orders/search", {
@@ -33,26 +31,31 @@ app.get("/orders", async (req, res) => {
         location_ids: [LOCATION_ID],
         query: {
           filter: {
-            state_filter: { states: ["OPEN", "COMPLETED"] }
+            state_filter: {
+              states: ["OPEN", "COMPLETED"]
+            }
           }
         }
       })
     });
 
     if (!response.ok) {
-      return res.status(response.status).send(await response.text());
+      const errorData = await response.text();
+      return res.status(response.status).send(`Square API error: ${errorData}`);
     }
 
     const data = await response.json();
-    const count = data.orders ? data.orders.length : 0;
-    res.json({ count });
-  } catch (err) {
-    console.error("Error fetching orders:", err);
+    const orderCount = data.orders ? data.orders.length : 0;
+    res.json({ count: orderCount });
+  } catch (error) {
+    console.error("Error fetching Square orders:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// 2. Total orders (all states)
+// -----------------------
+// Orders total amount
+// -----------------------
 app.get("/orders/total", async (req, res) => {
   try {
     const response = await fetch("https://connect.squareup.com/v2/orders/search", {
@@ -61,23 +64,38 @@ app.get("/orders/total", async (req, res) => {
         "Authorization": `Bearer ${SQUARE_ACCESS_TOKEN}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ location_ids: [LOCATION_ID] })
+      body: JSON.stringify({
+        location_ids: [LOCATION_ID],
+        query: {}
+      })
     });
 
     if (!response.ok) {
-      return res.status(response.status).send(await response.text());
+      const errorData = await response.text();
+      return res.status(response.status).send(`Square API error: ${errorData}`);
     }
 
     const data = await response.json();
-    const total = data.orders ? data.orders.length : 0;
-    res.json({ total });
-  } catch (err) {
-    console.error("Error fetching total orders:", err);
+    let totalAmount = 0;
+
+    if (data.orders) {
+      data.orders.forEach(order => {
+        if (order.total_money) {
+          totalAmount += order.total_money.amount;
+        }
+      });
+    }
+
+    res.json({ total: totalAmount / 100 }); // convert cents to dollars
+  } catch (error) {
+    console.error("Error fetching total orders:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// 3. Most popular item (by sold quantity)
+// -----------------------
+// Most popular item
+// -----------------------
 app.get("/orders/popular", async (req, res) => {
   try {
     const response = await fetch("https://connect.squareup.com/v2/orders/search", {
@@ -88,88 +106,102 @@ app.get("/orders/popular", async (req, res) => {
       },
       body: JSON.stringify({
         location_ids: [LOCATION_ID],
-        query: {
-          filter: { state_filter: { states: ["COMPLETED"] } }
-        }
+        query: {}
       })
     });
 
     if (!response.ok) {
-      return res.status(response.status).send(await response.text());
+      const errorData = await response.text();
+      return res.status(response.status).send(`Square API error: ${errorData}`);
     }
 
     const data = await response.json();
     const itemCounts = {};
 
     if (data.orders) {
-      for (const order of data.orders) {
+      data.orders.forEach(order => {
         if (order.line_items) {
-          for (const item of order.line_items) {
+          order.line_items.forEach(item => {
             const name = item.name;
-            const qty = parseInt(item.quantity) || 0;
+            const qty = parseInt(item.quantity, 10) || 0;
             itemCounts[name] = (itemCounts[name] || 0) + qty;
-          }
+          });
         }
+      });
+    }
+
+    let popularItem = null;
+    let maxCount = 0;
+    for (const [item, count] of Object.entries(itemCounts)) {
+      if (count > maxCount) {
+        popularItem = item;
+        maxCount = count;
       }
     }
 
-    const popular = Object.entries(itemCounts).sort((a, b) => b[1] - a[1])[0] || ["No Data", 0];
-    res.json({ item: popular[0], sold: popular[1] });
-  } catch (err) {
-    console.error("Error fetching popular item:", err);
+    res.json({ item: popularItem, count: maxCount });
+  } catch (error) {
+    console.error("Error fetching popular item:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// ======================
-// Social Media Endpoints
-// ======================
-
-// 4. TikTok followers by username (via Apify)
-app.get("/social/tiktok/:username", async (req, res) => {
+// -----------------------
+// TikTok followers (Apify)
+// -----------------------
+app.get("/social/tiktok", async (req, res) => {
   try {
-    const { username } = req.params;
-
-    const apifyResponse = await fetch(`https://api.apify.com/v2/acts/novi~tiktok-profile-scraper/run-sync-get-dataset-items?token=${APIFY_API_TOKEN}`, {
+    const username = TIKTOK_USERNAME;
+    const actorUrl = `https://api.apify.com/v2/acts/novi~tiktok-profile-scraper/run-sync-get-dataset-items?token=${APIFY_API_TOKEN}`;
+    
+    const response = await fetch(actorUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profiles: [username] })
+      body: JSON.stringify({ usernames: [username] })
     });
 
-    if (!apifyResponse.ok) {
-      return res.status(apifyResponse.status).send(await apifyResponse.text());
+    if (!response.ok) {
+      const errorData = await response.text();
+      return res.status(response.status).send(`Apify error: ${errorData}`);
     }
 
-    const data = await apifyResponse.json();
-    const followers = data[0]?.followers ?? 0;
-
-    res.json({ username, followers });
-  } catch (err) {
-    console.error("Error fetching TikTok followers:", err);
+    const data = await response.json();
+    if (data && data.length > 0) {
+      res.json({ username, followers: data[0].followers });
+    } else {
+      res.status(404).json({ error: "No TikTok data found" });
+    }
+  } catch (error) {
+    console.error("Error fetching TikTok followers:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// 5. YouTube subscribers by username
-app.get("/social/youtube/:username", async (req, res) => {
+// -----------------------
+// YouTube subscribers
+// -----------------------
+app.get("/social/youtube", async (req, res) => {
   try {
-    const { username } = req.params;
+    const url = `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${YOUTUBE_CHANNEL_ID}&key=${YOUTUBE_API_KEY}`;
+    const response = await fetch(url);
 
-    const ytResponse = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=statistics&forUsername=${encodeURIComponent(username)}&key=${YOUTUBE_API_KEY}`);
-    if (!ytResponse.ok) {
-      return res.status(ytResponse.status).send(await ytResponse.text());
+    if (!response.ok) {
+      const errorData = await response.text();
+      return res.status(response.status).send(`YouTube API error: ${errorData}`);
     }
 
-    const ytData = await ytResponse.json();
-    const subscribers = ytData.items?.[0]?.statistics?.subscriberCount ?? 0;
-
-    res.json({ username, subscribers });
-  } catch (err) {
-    console.error("Error fetching YouTube subscribers:", err);
+    const data = await response.json();
+    if (data.items && data.items.length > 0) {
+      res.json({ subscribers: data.items[0].statistics.subscriberCount });
+    } else {
+      res.status(404).json({ error: "No YouTube channel found" });
+    }
+  } catch (error) {
+    console.error("Error fetching YouTube subscribers:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ API running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
