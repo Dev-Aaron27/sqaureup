@@ -1,12 +1,11 @@
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch"); // npm install node-fetch@2
-require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Env variables
+// Env variables (set on Render dashboard)
 const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN;
 const LOCATION_ID = process.env.LOCATION_ID;
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
