@@ -13,11 +13,11 @@ const YOUTUBE_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID; // Your channel ID
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME; // Default username
 
+// Configure CORS to allow your frontend domain
 const corsOptions = {
-  origin: "https://bb-counter.infy.uk", // your frontend origin here
+  origin: "https://bb-counter.infy.uk", // Change this to your frontend URL
   optionsSuccessStatus: 200
 };
-
 app.use(cors(corsOptions));
 
 // -----------------------
@@ -166,18 +166,21 @@ app.get("/social/tiktok", async (req, res) => {
 
     if (!response.ok) {
       const errorData = await response.text();
-      return res.status(response.status).send(`Apify error: ${errorData}`);
+      console.warn(`Apify error: ${errorData}`);
+      // Return 0 followers on error
+      return res.json({ username, followers: 0 });
     }
 
     const data = await response.json();
     if (data && data.length > 0) {
       res.json({ username, followers: data[0].followers });
     } else {
-      res.status(404).json({ error: "No TikTok data found" });
+      // Return 0 followers if no data found
+      res.json({ username, followers: 0 });
     }
   } catch (error) {
     console.error("Error fetching TikTok followers:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.json({ username: TIKTOK_USERNAME, followers: 0 });
   }
 });
 
@@ -191,18 +194,21 @@ app.get("/social/youtube", async (req, res) => {
 
     if (!response.ok) {
       const errorData = await response.text();
-      return res.status(response.status).send(`YouTube API error: ${errorData}`);
+      console.warn(`YouTube API error: ${errorData}`);
+      // Return 0 subscribers on error
+      return res.json({ subscribers: 0 });
     }
 
     const data = await response.json();
     if (data.items && data.items.length > 0) {
       res.json({ subscribers: data.items[0].statistics.subscriberCount });
     } else {
-      res.status(404).json({ error: "No YouTube channel found" });
+      // Return 0 subscribers if no channel found
+      res.json({ subscribers: 0 });
     }
   } catch (error) {
     console.error("Error fetching YouTube subscribers:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.json({ subscribers: 0 });
   }
 });
 
